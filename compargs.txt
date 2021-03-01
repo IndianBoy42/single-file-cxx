@@ -1,0 +1,1 @@
+-O3 -march=native -isystem benchmark/include -Lbenchmark/build/src -lbenchmark -lpthread

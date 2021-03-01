@@ -1,0 +1,230 @@
+#!/usr/bin/env python
+import click
+import subprocess
+import watchgod
+import shutil
+from os import path, makedirs
+
+def do_compile(compiler, output_exe, srcfile, opt_level, std, native=True, openmp=False, eigen=False, blas=False, gtest=False, gbench=False, pthread=False, checkonly=False):
+    build = [compiler, srcfile, f'-O{opt_level}', f'--std={std}', '-I.', '-o', output_exe]
+    if native:
+        build.append('-march=native')
+        build.append('-mtune=native')
+    if checkonly:
+        build.append('-fsyntax-only')
+    if openmp:
+        build.append('-fopenmp')
+        build.append('-lomp')
+    if pthread:
+        build.append('-lpthread')
+    if eigen:
+        build.append('-leigen')
+    if blas:
+        build.append('-lopenblas')
+    if gbench:
+        build += ['-isystem', 'benchmark/include', '-Lbenchmark/build/src', '-lbenchmark' ]
+    if gtest:
+        raise NotImplementedError()
+    print(build)
+    status = subprocess.run(build)
+    return status.returncode
+
+def do_run_exe(output_exe):
+    r = [f'./{output_exe}']
+    subprocess.run(r)
+
+def docheck(srcfile, compiler, native, opt_level, output_exe, std, watch, openmp, blas, eigen, pthread):
+    do_compile(compiler, output_exe, srcfile, opt_level, std, native, openmp, checkonly=True)
+        
+def dorun(srcfile, compiler, native, opt_level, output_exe, std, watch, openmp, blas, eigen, pthread):
+    ret = do_compile(compiler, output_exe, srcfile, opt_level, std, native, openmp)
+    if ret == 0:
+        do_run_exe(output_exe)
+
+def dobench(srcfile, compiler, native, opt_level, output_exe, std, watch, openmp, blas, eigen, pthread):
+    ret = do_compile(compiler, output_exe, srcfile, opt_level, std, native, openmp, gbench=True, pthread=True)
+    if ret == 0:
+        do_run_exe(output_exe)
+    return
+
+    build = [compiler, srcfile, f'-O{opt_level}', f'--std={std}',
+             '-isystem', 'benchmark/include', '-Lbenchmark/build/src', '-lbenchmark', 
+             '-lpthread',
+             '-I', '.', 
+             '-o', output_exe]
+    if native:
+        build.append('-march=native')
+        build.append('-mtune=native')
+    if openmp:
+        build.append('-fopenmp')
+    print(build)
+    status = subprocess.run(build)
+    if status.returncode != 0:
+        return
+
+    r = [f'./{output_exe}']
+    subprocess.run(r)
+
+def dotest(srcfile, compiler, native, opt_level, output_exe, std, watch, openmp):
+    build = [compiler, srcfile, f'-O{opt_level}', f'--std={std}',
+             '-isystem', 'gtest/include', '-Lgtest/build/src', '-lgtest', 
+             '-lpthread',
+             '-I', '.', 
+             '-o', output_exe]
+    if native:
+        build.append('-march=native')
+        build.append('-mtune=native')
+    if openmp:
+        build.append('-fopenmp')
+    print(build)
+    status = subprocess.run(build)
+    if status.returncode != 0:
+        return
+
+    r = [f'./{output_exe}']
+    subprocess.run(r)
+
+
+@click.group()
+def benchmark_helper():
+    pass
+
+@benchmark_helper.group()
+def new():
+    pass
+
+@new.command()
+@click.argument('name', default='example.c')
+def main(name):
+    if path.exists(name):
+        print(f'{name} Already exists')
+    else:
+        shutil.copyfile('./main-template.c', f'./{name}')
+    print(f'Open+Edit ./{name}')
+    print(f'Then run the following to run/check (add -w to rerun on file change)')
+    print(f'{__file__} run/check {name}')
+
+@new.command()
+@click.argument('name', default='example.cpp')
+def main(name):
+    if path.exists(name):
+        print(f'{name} Already exists')
+    else:
+        shutil.copyfile('./main-template.cpp', f'./{name}')
+    print(f'Open+Edit ./{name}')
+    print(f'Then run the following to run/check (add -w to rerun on file change)')
+    print(f'{__file__} run/check {name}')
+
+@new.command()
+@click.argument('name', default='example.cpp')
+def test(name):
+    if path.exists(name):
+        print(f'{name} Already exists')
+    else:
+        shutil.copyfile('./test-template.cpp', f'./{name}')
+    print(f'Open+Edit ./{name}')
+    print(f'Then run the following to test (add -w to rerun on file change)')
+    print(f'{__file__} test {name}')
+
+@new.command()
+@click.argument('name', default='example.cpp')
+def bench(name):
+    if path.exists(name):
+        print(f'{name} Already exists')
+    else:
+        shutil.copyfile('./benchmark-template.cpp', f'./{name}')
+    print(f'Open+Edit ./{name}')
+    print(f'Then run the following to bench (add -w to rerun on file change)')
+    print(f'{__file__} bench {name}')
+
+import functools
+
+def compile_options(fn):
+    fn = click.argument('srcfile')(fn)
+    fn = click.option('--compiler', '-c', default='g++')        (fn)
+    fn = click.option('--native/--no-native', default=True)     (fn)
+    fn = click.option('--opt-level', '-O', default=3)           (fn)
+    fn = click.option('--output-exe', '-o', default=None)       (fn)
+    fn = click.option('--std', default='gnu++20')               (fn)
+    fn = click.option('--watch/--no-watch', '-w', default=False)(fn)
+    fn = click.option('--omp/--no-omp', '-w', default=False)(fn)
+    fn = click.option('--eigen/--no-eigen', '-w', default=False)(fn)
+    fn = click.option('--pthread/--no-pthread', '-w', default=False)(fn)
+    fn = click.option('--blas/--no-blas', '-w', default=False)(fn)
+    return fn
+
+def fix_inputs(srcfile, compiler, output_exe):
+    # Find the source file, by trying different extensions
+    if not path.exists(srcfile):
+        if path.exists(srcfile + '.cpp'):
+            srcfile = srcfile + '.cpp'
+        elif path.exists(srcfile + '.c'):
+            srcfile = srcfile + '.c'
+
+    # Make sure to use the c++ compiler
+    if srcfile.endswith('cpp'):
+        compiler = compiler.replace('gcc', 'g++')
+        if 'clang' in compiler and 'clang++' not in compiler:
+            compiler = compiler.replace('clang', 'clang++')
+    elif srcfile.endswith('c'):
+        compiler = compiler.replace('g++', 'gcc')
+        compiler = compiler.replace('clang++', 'clang')
+
+    # correct the output_exe
+    if output_exe is None:
+        output_exe = f'build/{srcfile}'
+        makedirs('build', exist_ok=True)
+
+    return srcfile, compiler, output_exe
+
+@benchmark_helper.command()
+@compile_options
+def test(srcfile, compiler, native, opt_level, output_exe, std, watch, omp):
+    srcfile, compiler, output_exe = fix_inputs(srcfile, compiler, output_exe)
+    if not srcfile.endswith('.cpp'):
+        raise ArgumentError('GTest only works with C++')
+
+    if watch:
+        for change in watchgod.watch(cpp):
+            dotest(srcfile, compiler, native, opt_level, output_exe, std, watch, omp)
+    else:
+        dotest(srcfile, compiler, native, opt_level, output_exe, std, watch, omp)
+        
+@benchmark_helper.command()
+@compile_options
+def check(srcfile, compiler, native, opt_level, output_exe, std, watch, omp, blas, eigen, pthread):
+    srcfile, compiler, output_exe = fix_inputs(srcfile, compiler, output_exe)
+
+    if watch:
+        for change in watchgod.watch(cpp):
+            docheck(srcfile, compiler, native, opt_level, output_exe, std, watch, omp, blas, eigen, pthread)
+    else:
+        docheck(srcfile, compiler, native, opt_level, output_exe, std, watch, omp, blas, eigen, pthread)
+
+@benchmark_helper.command()
+@compile_options
+def run(srcfile, compiler, native, opt_level, output_exe, std, watch, omp, blas, eigen, pthread):
+    srcfile, compiler, output_exe = fix_inputs(srcfile, compiler, output_exe)
+
+    if watch:
+        for change in watchgod.watch(cpp):
+            dorun(srcfile, compiler, native, opt_level, output_exe, std, watch, omp, blas, eigen, pthread)
+    else:
+        dorun(srcfile, compiler, native, opt_level, output_exe, std, watch, omp, blas, eigen, pthread)
+        
+@benchmark_helper.command()
+@compile_options
+def bench(srcfile, compiler, native, opt_level, output_exe, std, watch, omp, blas, eigen, pthread):
+    srcfile, compiler, output_exe = fix_inputs(srcfile, compiler, output_exe)
+    if not srcfile.endswith('.cpp'):
+        raise ArgumentError('Google Benchmarks only works with C++')
+
+    if watch:
+        for change in watchgod.watch(cpp):
+            dobench(srcfile, compiler, native, opt_level, output_exe, std, watch, omp, blas, eigen, pthread)
+    else:
+        dobench(srcfile, compiler, native, opt_level, output_exe, std, watch, omp, blas, eigen, pthread)
+
+
+if __name__ == '__main__':
+    benchmark_helper()
